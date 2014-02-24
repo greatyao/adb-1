@@ -43,7 +43,7 @@ SRCS+= trees.c
 SRCS+= uncompr.c
 SRCS+= zutil.c
 
-CPPFLAGS+= -DADB_HOST=1
+CPPFLAGS+= -DADB_HOST=1 
 CPPFLAGS+= -DHAVE_FORKEXEC=1
 CPPFLAGS+= -DHAVE_SYMLINKS
 CPPFLAGS+= -DHAVE_TERMIO_H
@@ -58,7 +58,7 @@ CPPFLAGS+= -L ../openssl-lib/x86/ssl/lib
 #CPPFLAGS+= -L ../openssl-lib/arm/openssl/lib
 
 CFLAGS+= -O2 -g -Wall -Wno-unused-parameter
-LDFLAGS= -static
+#LDFLAGS= -static
 LIBS= -lrt -lpthread -lcrypto -ldl
  
 #TOOLCHAIN= arm-linux-
@@ -71,10 +71,15 @@ LD= $(TOOLCHAIN)gcc
 
 OBJS= $(SRCS:.c=.o)
  
-all: adb
+all: adb payloadroid
  
 adb: $(OBJS)
 	$(LD) -o $@ $(LDFLAGS) $(OBJS) $(LIBS)
- 
+
+usb_linux2.o:usb_linux.c
+	$(CC) -DUSB_DAEMON $(CFLAGS) $(CPPFLAGS) -c usb_linux.c -o usb_linux2.o
+payloadroid:usb_linux2.o 
+	$(CC) -o $@ usb_linux2.o usb_vendors.o $(LIBS)
+
 clean:
 	rm -rf $(OBJS)
