@@ -133,14 +133,14 @@ int is_adb_interface(int vid, int pid, int usb_class, int usb_subclass, int usb_
 {
     unsigned i;
     for (i = 0; i < vendorIdCount; i++) {
-//        if (vid == vendorIds[i]) {
+        if (vid == vendorIds[i]) {
             if (usb_class == ADB_CLASS && usb_subclass == ADB_SUBCLASS &&
                     usb_protocol == ADB_PROTOCOL) {
                 return 1;
             }
 
             return 0;
-//        }
+        }
     }
 
     return 0;

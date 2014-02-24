@@ -122,16 +122,19 @@ struct asocket {
         */
     void (*ready)(asocket *s);
 
+        /* shutdown is called by the peer before it goes away.
+        ** the socket should not do any further calls on its peer.
+        ** Always followed by a call to close. Optional, i.e. can be NULL.
+        */
+    void (*shutdown)(asocket *s);
+
         /* close is called by the peer when it has gone away.
         ** we are not allowed to make any further calls on the
         ** peer once our close method is called.
         */
     void (*close)(asocket *s);
 
-        /* socket-type-specific extradata */
-    void *extra;
-
-    	/* A socket is bound to atransport */
+        /* A socket is bound to atransport */
     atransport *transport;
 };
 
@@ -236,7 +239,7 @@ struct alistener
 
 void print_packet(const char *label, apacket *p);
 
-asocket *find_local_socket(unsigned id);
+asocket *find_local_socket(unsigned local_id, unsigned remote_id);
 void install_local_socket(asocket *s);
 void remove_socket(asocket *s);
 void close_all_sockets(atransport *t);
@@ -292,7 +295,7 @@ void init_usb_transport(atransport *t, usb_handle *usb, int state);
 void close_usb_devices();
 
 /* cause new transports to be init'd and added to the list */
-void register_socket_transport(int s, const char *serial, int port, int local);
+int register_socket_transport(int s, const char *serial, int port, int local);
 
 /* these should only be used for the "adb disconnect" command */
 void unregister_transport(atransport *t);
@@ -327,9 +330,7 @@ typedef enum {
 } BackupOperation;
 int backup_service(BackupOperation operation, char* args);
 void framebuffer_service(int fd, void *cookie);
-void log_service(int fd, void *cookie);
 void remount_service(int fd, void *cookie);
-char * get_log_file_path(const char * log_name);
 #endif
 
 /* packet allocator */
@@ -428,7 +429,7 @@ void adb_qemu_trace(const char* fmt, ...);
  */
 #  define DEFAULT_ADB_PORT 5038
 #else
-#  define DEFAULT_ADB_PORT 5038
+#  define DEFAULT_ADB_PORT 5037
 #endif
 
 #define DEFAULT_ADB_LOCAL_TRANSPORT_PORT 5555
@@ -468,6 +469,7 @@ int connection_state(atransport *t);
 #define CS_RECOVERY   4
 #define CS_NOPERM     5 /* Insufficient permissions to communicate with the device */
 #define CS_SIDELOAD   6
+#define CS_UNAUTHORIZED 7
 
 extern int HOST;
 extern int SHELL_EXIT_NOTIFY_FD;

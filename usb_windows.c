@@ -447,57 +447,6 @@ int recognized_device(usb_handle* handle) {
   return 0;
 }
 
-
-//added by wangbing for getting the adb_interface_name of usb_device in windows
-//截取interface_name中有用的字段
-void cut_interface_name(char *interface_name, char *cut)
-{
-    char *p = interface_name;
-     int flag = 0, i = 0;
-     for(; (*p != '\0') && (flag != 2); p++)
-     {
-              if(*p == '#')
-                    flag++;
-              //获取pid，vid 
-              if(flag == 1)
-              {
-                      char *tmp = p;
-                      for(tmp += 5; i< 8; i++, tmp++)
-                      {
-                            cut[i] = *tmp;
-                            if(i == 3)
-                                 tmp += 5;     
-                      }
-              }
-              
-     }
-     //获取范例id 
-     for(; (*p != '\0') && (*p != '#'); p++)
-     {
-           if ((*p > 47 && *p < 58) || (*p > 96 && *p < 123))
-           {
-                 cut[i] = *p;
-                 i++;
-           }
-     }
-     cut[i] = '\0';
-              
-}
-
-//加密 
-void encrypt_cut(char *cut)
-{
-     char *p = cut;
-     int i = 0;
-     for(; *p != '\0'; p++, i++)
-     {
-           if(*p > 47 && *p < 58)
-              *p = (*p + i)>57?((*p + i - 58)%10 + 48):(*p + i);
-           else
-              *p = (*p + i)>122?((*p + i - 123)%26 + 97):(*p + i);
-     }
-}
-
 void find_devices() {
         usb_handle* handle = NULL;
   char entry_buffer[2048];
@@ -534,11 +483,6 @@ void find_devices() {
         if (recognized_device(handle)) {
           D("adding a new device %s\n", interf_name);
           char serial_number[512];
-          
-          char cut[1024];
-          cut_interface_name(interf_name, cut);
-          encrypt_cut(cut);
-          
           unsigned long serial_number_len = sizeof(serial_number);
           if (AdbGetSerialNumber(handle->adb_interface,
                                 serial_number,
@@ -546,10 +490,7 @@ void find_devices() {
                                 true)) {
             // Lets make sure that we don't duplicate this device
             if (register_new_device(handle)) {
-              //register_usb_transport(handle, serial_number, NULL, 1);
-              //modified by wangbing 修改adb注册代码，由原来的以
-              //serialnumber注册改为由加密后的interfacename注册
-              register_usb_transport(handle, cut, NULL, 1);
+              register_usb_transport(handle, serial_number, NULL, 1);
             } else {
               D("register_new_device failed for %s\n", interf_name);
               usb_cleanup_handle(handle);

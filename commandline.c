@@ -21,9 +21,6 @@
 #include <unistd.h>
 #include <limits.h>
 #include <stdarg.h>
-//added by wangbing for DIR
-#include <dirent.h>
-//end
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <ctype.h>
@@ -39,15 +36,6 @@
 #include "adb.h"
 #include "adb_client.h"
 #include "file_sync_service.h"
-
-//added by wangbing
-struct sync_apk
-{
-	char* apk_file;
-	char* apk_dest;
-	int verify_apk;
-};
-//end
 
 static int do_cmd(transport_type ttype, char* serial, char *cmd, ...);
 
@@ -156,12 +144,15 @@ void help()
         "  adb bugreport                - return all information from the device\n"
         "                                 that should be included in a bug report.\n"
         "\n"
-        "  adb backup [-f <file>] [-apk|-noapk] [-shared|-noshared] [-all] [-system|-nosystem] [<packages...>]\n"
+        "  adb backup [-f <file>] [-apk|-noapk] [-obb|-noobb] [-shared|-noshared] [-all] [-system|-nosystem] [<packages...>]\n"
         "                               - write an archive of the device's data to <file>.\n"
         "                                 If no -f option is supplied then the data is written\n"
         "                                 to \"backup.ab\" in the current directory.\n"
         "                                 (-apk|-noapk enable/disable backup of the .apks themselves\n"
         "                                    in the archive; the default is noapk.)\n"
+        "                                 (-obb|-noobb enable/disable backup of any installed apk expansion\n"
+        "                                    (aka .obb) files associated with each application; the default\n"
+        "                                    is noobb.)\n"
         "                                 (-shared|-noshared enable/disable backup of the device's\n"
         "                                    shared storage / SD card contents; the default is noshared.)\n"
         "                                 (-all means to back up all installed applications)\n"
@@ -631,15 +622,13 @@ int ppp(int argc, char **argv)
 
 static int send_shellcommand(transport_type transport, char* serial, char* buf)
 {
-    int fd, ret = 0;
+    int fd, ret;
 
     for(;;) {
         fd = adb_connect(buf);
         if(fd >= 0)
             break;
         fprintf(stderr,"- waiting for device -\n");
-		ret = 88;
-		return ret;
         adb_sleep_ms(1000);
         do_cmd(transport, serial, "wait-for-device", 0);
     }
@@ -778,7 +767,7 @@ static int restore(int argc, char** argv) {
 
     fd = adb_connect("restore:");
     if (fd < 0) {
-        fprintf(stderr, "adb: unable to connect for backup\n");
+        fprintf(stderr, "adb: unable to connect for restore\n");
         adb_close(tarFd);
         return -1;
     }
@@ -1584,7 +1573,6 @@ static int pm_command(transport_type transport, char* serial,
                       int argc, char** argv)
 {
     char buf[4096];
-	int ret = 0;
 
     snprintf(buf, sizeof(buf), "shell:pm");
 
@@ -1598,11 +1586,8 @@ static int pm_command(transport_type transport, char* serial,
         free(quoted);
     }
 
-    ret = send_shellcommand(transport, serial, buf);
-	if(ret == 88)
-		return ret;
-	else
-    	return 0;
+    send_shellcommand(transport, serial, buf);
+    return 0;
 }
 
 int uninstall_app(transport_type transport, char* serial, int argc, char** argv)
@@ -1669,40 +1654,19 @@ static int check_file(const char* filename)
     return 0;
 }
 
-void *thread_function(void *arg)
-{
-	struct sync_apk *tmp;
-	tmp = (struct sync_apk *)arg;
-	do_sync_push(tmp->apk_file,tmp->apk_dest,tmp->verify_apk);
-	pthread_exit("success");
-}
-
 int install_app(transport_type transport, char* serial, int argc, char** argv)
 {
     static const char *const DATA_DEST = "/data/local/tmp/%s";
     static const char *const SD_DEST = "/sdcard/tmp/%s";
     const char* where = DATA_DEST;
     char apk_dest[PATH_MAX];
-	char apk_dest_next[PATH_MAX];
     char verification_dest[PATH_MAX];
-    char apk_file[512];
-	char apk_file_next[512];
-	//added by wangbing
-	char* path;
-	struct dirent* ent = NULL;
-	DIR 	*pDir;
-	char    dir[512];
-	char   file[20][512];
-	char (*p_file)[512] = file;
-	char (*p)[512] = file;
-	struct sync_apk *sync;
-	//end
+    char* apk_file;
     char* verification_file = NULL;
     int file_arg = -1;
     int err;
     int i;
     int verify_apk = 1;
-	int ret = 0;
 
     for (i = 1; i < argc; i++) {
         if (*argv[i] != '-') {
@@ -1733,70 +1697,50 @@ int install_app(transport_type transport, char* serial, int argc, char** argv)
         return 1;
     }
 
-    path = argv[file_arg];
-	
-	//added by wangbing
-	//apk_file代表apk文件夹路径
-	if(  (pDir=opendir(path))==NULL  )
-    {
-        fprintf( stderr, "Cannot open directory:%s\n", path);
+    apk_file = argv[file_arg];
+
+    if (file_arg != argc - 1) {
+        verification_file = argv[file_arg + 1];
+    }
+
+    if (check_file(apk_file) || check_file(verification_file)) {
         return 1;
     }
-	while(  (ent=readdir(pDir))!=NULL  )
-    {
-        //snprintf( dir, 512,"%s/%s", path, ent->d_name );
-        if(strcmp(".", ent->d_name) && strcmp("..", ent->d_name))
-        {
-        	snprintf( dir, 512,"%s/%s", path, ent->d_name );
-        	//将apk_file改为获取到的apk文件路径
-        	strcpy(p_file,dir);
-			p_file++;
-			//修改argv参数列表，以供pm_command使用
-			//strcpy(argv[file_arg],apk_file);
-			//
 
-			//直接复制后续代码到此处，不做任何修改
+    snprintf(apk_dest, sizeof apk_dest, where, get_basename(apk_file));
+    if (verification_file != NULL) {
+        snprintf(verification_dest, sizeof(verification_dest), where, get_basename(verification_file));
 
-			//
-
+        if (!strcmp(apk_dest, verification_dest)) {
+            fprintf(stderr, "APK and verification file can't have the same name\n");
+            return 1;
         }
     }
-	closedir(pDir);
-	//end
 
-	sync = malloc(sizeof(struct sync_apk));
-	sync->verify_apk = verify_apk;
-	strcpy(apk_file,p);
-	snprintf(apk_dest, sizeof apk_dest, where, get_basename(apk_file));
-	do_sync_push(apk_file,apk_dest,verify_apk);
+    err = do_sync_push(apk_file, apk_dest, verify_apk);
+    if (err) {
+        goto cleanup_apk;
+    } else {
+        argv[file_arg] = apk_dest; /* destination name, not source location */
+    }
 
+    if (verification_file != NULL) {
+        err = do_sync_push(verification_file, verification_dest, 0 /* no verify APK */);
+        if (err) {
+            goto cleanup_apk;
+        } else {
+            argv[file_arg + 1] = verification_dest; /* destination name, not source location */
+        }
+    }
 
-	for(; p != p_file;p++)
-	{
-		int res;
-		pthread_t a_thread;
-		strcpy(apk_file,p);
-		snprintf(apk_dest, sizeof apk_dest, where, get_basename(apk_file));
-		
-		if(p != (p_file-1))
-		{
-			strcpy(apk_file_next,(p+1));
-			snprintf(apk_dest_next, sizeof apk_dest, where, get_basename(apk_file_next));
-			sync->apk_file = apk_file_next;
-			sync->apk_dest = apk_dest_next;
-			pthread_create(&a_thread, NULL, thread_function, (void *)sync);
-		}
-		argv[file_arg] = apk_dest; 
+    pm_command(transport, serial, argc, argv);
 
-	
+cleanup_apk:
+    if (verification_file != NULL) {
+        delete_file(transport, serial, verification_dest);
+    }
 
-		ret = pm_command(transport, serial, argc, argv);
-		if(ret == 88)
-			return 1;
-
-	
-		delete_file(transport, serial, apk_dest);
-	}
+    delete_file(transport, serial, apk_dest);
 
     return err;
 }

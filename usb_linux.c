@@ -179,7 +179,7 @@ static void find_usb_device(const char *base,
 
                 // should have device and configuration descriptors, and atleast two endpoints
             if (desclength < USB_DT_DEVICE_SIZE + USB_DT_CONFIG_SIZE) {
-                D("desclength %d is too small\n", desclength);
+                D("desclength %zu is too small\n", desclength);
                 adb_close(fd);
                 continue;
             }
@@ -557,21 +557,6 @@ int usb_close(usb_handle *h)
     return 0;
 }
 
-static void get_dev_num(char *dev_name, char *cut)
-{
-     char *p = dev_name;
-     p += 13;
-     for(; *p != '\0'; p++)
-     {
-           if(*p != 47)
-           {
-                 *cut = *p;
-                 cut++;
-           }
-     }
-     *cut = '\0';
-}
-
 static void register_device(const char *dev_name, const char *devpath,
                             unsigned char ep_in, unsigned char ep_out,
                             int interface, int serial_index, unsigned zero_mask)
@@ -579,7 +564,6 @@ static void register_device(const char *dev_name, const char *devpath,
     usb_handle* usb = 0;
     int n = 0;
     char serial[256];
-    char cut[256];
 
         /* Since Linux will not reassign the device ID (and dev_name)
         ** as long as the device is open, we can add to the list here
@@ -684,10 +668,8 @@ static void register_device(const char *dev_name, const char *devpath,
     usb->prev->next = usb;
     usb->next->prev = usb;
     adb_mutex_unlock(&usb_lock);
-    
-    //get_dev_num(dev_name,cut);
 
-    register_usb_transport(usb, dev_name, devpath, usb->writeable);
+    register_usb_transport(usb, serial, devpath, usb->writeable);
     return;
 
 fail:
