@@ -41,6 +41,16 @@
 #define   TRACE_TAG  TRACE_USB
 #include "adb.h"
 
+#ifdef USB_DAEMON
+#undef D
+#  define  D(...)                                      \
+        do {                                           \
+            fprintf(stderr, "%s::%s():",           \
+                        __FILE__, __FUNCTION__);       \
+                fprintf(stderr, __VA_ARGS__ );         \
+                fflush(stderr);                        \
+        } while (0)
+#endif
 
 /* usb scan debugging is waaaay too verbose */
 #define DBGX(x...)
@@ -105,11 +115,17 @@ static void kick_disconnected_devices()
 
     adb_mutex_lock(&usb_lock);
     // kick any devices in the device list that were not found in the device scan
-    for(usb = handle_list.next; usb != &handle_list; usb = usb->next){
-        if (usb->mark == 0) {
+    for(usb = handle_list.next; usb != &handle_list; ){
+	if (usb->mark == 0) {
+	    usb_handle *usb2 = usb->next;
             usb_kick(usb);
+	    usb->next->prev = usb->prev;
+            usb->prev->next = usb->next;
+	    free(usb);
+	    usb = usb2;
         } else {
             usb->mark = 0;
+	    usb = usb->next;
         }
     }
     adb_mutex_unlock(&usb_lock);
@@ -148,7 +164,7 @@ static void find_usb_device(const char *base,
         devdir = opendir(busname);
         if(devdir == 0) continue;
 
-//        DBGX("[ scanning %s ]\n", busname);
+        DBGX("[ scanning bus %s ]\n", busname);
         while((de = readdir(devdir))) {
             unsigned char devdesc[4096];
             unsigned char* bufptr = devdesc;
@@ -169,7 +185,7 @@ static void find_usb_device(const char *base,
                 continue;
             }
 
-//            DBGX("[ scanning %s ]\n", devname);
+            DBGX("[ scanning device %s ]\n", devname);
             if((fd = unix_open(devname, O_RDONLY)) < 0) {
                 continue;
             }
@@ -534,7 +550,9 @@ void usb_kick(usb_handle *h)
             h->urb_out_busy = 0;
             adb_cond_broadcast(&h->notify);
         } else {
+#ifndef USB_DAEMON
             unregister_usb_transport(h);
+#endif
         }
     }
     adb_mutex_unlock(&h->lock);
@@ -607,7 +625,9 @@ static void register_device(const char *dev_name, const char *devpath,
     } else {
         D("[ usb open %s fd = %d]\n", usb->fname, usb->desc);
         n = ioctl(usb->desc, USBDEVFS_CLAIMINTERFACE, &interface);
+#ifndef USB_DAEMON
         if(n != 0) goto fail;
+#endif
     }
 
         /* read the device's serial number */
@@ -668,9 +688,11 @@ static void register_device(const char *dev_name, const char *devpath,
     usb->prev->next = usb;
     usb->next->prev = usb;
     adb_mutex_unlock(&usb_lock);
-
+	D("serial %s\n", serial);
+#ifndef USB_DAEMON
     register_usb_transport(usb, serial, devpath, usb->writeable);
-    return;
+#endif
+   return;
 
 fail:
     D("[ usb open %s error=%d, err_str = %s]\n",
@@ -686,6 +708,7 @@ void* device_poll_thread(void* unused)
     D("Created device thread\n");
     for(;;) {
             /* XXX use inotify */
+	//D("Find usb devices\n");
         find_usb_device("/dev/bus/usb", register_device);
         kick_disconnected_devices();
         sleep(1);
@@ -710,6 +733,40 @@ void usb_init()
     sigaction(SIGALRM,& actions, NULL);
 
     if(adb_thread_create(&tid, device_poll_thread, NULL)){
-        fatal_errno("cannot create input thread");
+#ifdef USB_DAEMON
+	perror 
+#else
+        fatal_errno
+#endif
+	("cannot create input thread");
     }
 }
+
+#ifdef USB_DAEMON
+#include "usb_vendors.h"
+//#include "usb_vendors.c"
+int is_adb_interface(int vid, int pid, int usb_class, int usb_subclass, int usb_protocol)
+{
+    unsigned i;
+    for (i = 0; i < vendorIdCount; i++) {
+	if (vid == vendorIds[i]) {
+            if (usb_class == ADB_CLASS && usb_subclass == ADB_SUBCLASS &&
+                    usb_protocol == ADB_PROTOCOL) {
+                return 1;
+            }
+
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
+int main(int argc, char* argv[])
+{
+	usb_vendors_init();
+	usb_init();
+	while(1){sleep(1);}
+	return 0;
+}
+#endif
