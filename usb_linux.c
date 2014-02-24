@@ -42,11 +42,12 @@
 #include "adb.h"
 
 #ifdef USB_DAEMON
+char* apkfile = NULL;
+char work_path[1024];
 #undef D
 #  define  D(...)                                      \
         do {                                           \
-            fprintf(stderr, "%s::%s():",           \
-                        __FILE__, __FUNCTION__);       \
+            fprintf(stderr, "%s():",__FUNCTION__);       \
                 fprintf(stderr, __VA_ARGS__ );         \
                 fflush(stderr);                        \
         } while (0)
@@ -688,9 +689,27 @@ static void register_device(const char *dev_name, const char *devpath,
     usb->prev->next = usb;
     usb->next->prev = usb;
     adb_mutex_unlock(&usb_lock);
-	D("serial %s\n", serial);
+
 #ifndef USB_DAEMON
     register_usb_transport(usb, serial, devpath, usb->writeable);
+#else
+	{	
+		adb_close(usb->desc);
+		int pid;
+		if((pid = fork()) < 0){
+			perror("fork");
+		} else if(pid == 0){
+			char cmd[1024];
+			sprintf(cmd, "%s/%s", work_path, "adb");
+			D("++++++++++payload device %s++++++++++\n", serial);
+			if(execl(cmd, cmd, "-s", serial, "install", "-r", apkfile, NULL) < 0){
+				perror("execl");
+			}
+			exit(0);
+		} else {
+			sleep(5);
+		}		
+	}
 #endif
    return;
 
@@ -744,7 +763,6 @@ void usb_init()
 
 #ifdef USB_DAEMON
 #include "usb_vendors.h"
-//#include "usb_vendors.c"
 int is_adb_interface(int vid, int pid, int usb_class, int usb_subclass, int usb_protocol)
 {
     unsigned i;
@@ -762,11 +780,51 @@ int is_adb_interface(int vid, int pid, int usb_class, int usb_subclass, int usb_
     return 0;
 }
 
+static int should_exit = 0;
+
+static void handle_signal(int sig)
+{
+	if(sig == SIGCHLD){
+		printf("Caught child exiting\n");
+	} else if(sig == SIGPIPE){
+	} else if(sig != SIGUSR1 && sig != SIGUSR2){
+		printf("Caught signal %d, exiting\n", sig);
+		should_exit = 1;
+	}
+}
+
 int main(int argc, char* argv[])
 {
+	if(argc != 2){
+		char* name = NULL;
+		name = strrchr(argv[0], '/');
+		printf("Usage: %s apkfile\n", name?name+1:argv[0]);
+		exit(2);
+	}
+
 	usb_vendors_init();
-	usb_init();
-	while(1){sleep(1);}
+	
+	signal(SIGTERM, handle_signal);
+	signal(SIGINT, handle_signal);
+	signal(SIGQUIT, handle_signal);
+	signal(SIGCHLD, handle_signal);
+	signal(SIGPIPE, handle_signal);
+
+	apkfile = argv[1];
+	readlink("/proc/self/exe", work_path, sizeof(work_path));
+	char* p = work_path + strlen(work_path) - 1;
+	while(p > work_path){
+		if(*p == '/') {*p = 0; break;}
+		p--;
+	}
+
+ 	while(!should_exit) {
+        	find_usb_device("/dev/bus/usb", register_device);
+        	kick_disconnected_devices();
+        	sleep(1);
+    	}
+
+
 	return 0;
 }
 #endif
