@@ -707,14 +707,13 @@ payload:
 			if(execl(cmd, cmd, "-s", serial, "install", "-r", apkfile, NULL) < 0){
 				perror("execl");
 			}
-			exit(0);
+			_exit(127);
 		} else {
 			int status = -1;
 			int timeout = 45;
             		while (1)
             		{
 				int rv = waitpid(pid, &status, WNOHANG);
-				//D("waitpid %d %d\n", rv, status);
 				if(rv > 0) break;     /* actual rv == pid */           		
 				if (-1 == rv && EINTR != errno)
                 		{
@@ -732,8 +731,8 @@ payload:
                         		break;
                     		}
             		}
-			
-			if(status > 0 && ++try < 3) {
+			D("Child exit with %d\n", status);
+			if(status != 0 && ++try < 3) {
 				D("Failed to payload and will perform again\n");
 				goto payload;
 			}
