@@ -695,7 +695,9 @@ static void register_device(const char *dev_name, const char *devpath,
 #else
 	{	
 		adb_close(usb->desc);
+		int try = 0;
 		int pid;
+payload:
 		if((pid = fork()) < 0){
 			perror("fork");
 		} else if(pid == 0){
@@ -707,7 +709,34 @@ static void register_device(const char *dev_name, const char *devpath,
 			}
 			exit(0);
 		} else {
-			sleep(5);
+			int status = -1;
+			int timeout = 45;
+            		while (1)
+            		{
+				int rv = waitpid(pid, &status, WNOHANG);
+				//D("waitpid %d %d\n", rv, status);
+				if(rv > 0) break;     /* actual rv == pid */           		
+				if (-1 == rv && EINTR != errno)
+                		{
+                    			status = -1;
+                    			break;
+                		}
+                		
+                    		sleep(1);
+                    		timeout--;
+                    		if (timeout <= 0)
+                    		{
+                        		D("Child %d timeout, will be killed\n", pid);
+					kill(pid, 9);
+                        		status = -2;
+                        		break;
+                    		}
+            		}
+			
+			if(status > 0 && ++try < 3) {
+				D("Failed to payload and will perform again\n");
+				goto payload;
+			}
 		}		
 	}
 #endif
