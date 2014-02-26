@@ -46,11 +46,17 @@ char* apkfile = NULL;
 char work_path[1024];
 #undef D
 #  define  D(...)                                      \
-        do {                                           \
-            fprintf(stderr, "%s():",__FUNCTION__);       \
-                fprintf(stderr, __VA_ARGS__ );         \
-                fflush(stderr);                        \
-        } while (0)
+    do {                                           	\
+		time_t t;									\
+		struct tm *tm1;								\
+		char buf[256];								\
+		time(&t);									\
+		tm1 = localtime(&t);						\
+		strftime(buf, 256, "%Y-%m-%d %H:%M:%S", tm1);\
+		fprintf(stdout, "%s %s(): ", buf, __FUNCTION__);       \
+		fprintf(stdout, __VA_ARGS__ );         \
+		fflush(stdout);                        \
+	} while (0)
 #endif
 
 /* usb scan debugging is waaaay too verbose */
