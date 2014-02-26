@@ -26,6 +26,18 @@
 #define   TRACE_TAG  TRACE_USB
 #include "adb.h"
 
+#ifdef USB_DAEMON
+char* apkfile = NULL;
+char work_path[1024];
+#undef D
+#  define  D(...)                                      \
+        do {                                           \
+            fprintf(stdout, "%s():",__FUNCTION__);       \
+                fprintf(stdout, __VA_ARGS__ );         \
+                fflush(stdout);                        \
+        } while (0)
+#endif
+
 /** Structure usb_handle describes our connection to the usb device via
   AdbWinApi.dll. This structure is returned from usb_open() routine and
   is expected in each subsequent call that is accessing the device.
@@ -73,7 +85,11 @@ int known_device(const char* dev_name);
 int known_device_locked(const char* dev_name);
 
 /// Registers opened usb handle (adds it to handle_list).
+#ifdef USB_DAEMON
+int register_new_device(usb_handle* handle, char* serial);
+#else 
 int register_new_device(usb_handle* handle);
+#endif
 
 /// Checks if interface (device) matches certain criteria
 int recognized_device(usb_handle* handle);
@@ -142,7 +158,12 @@ int known_device(const char* dev_name) {
   return ret;
 }
 
-int register_new_device(usb_handle* handle) {
+#ifdef USB_DAEMON
+int register_new_device(usb_handle* handle, char* serial)
+#else 
+int register_new_device(usb_handle* handle)
+#endif 
+{
   if (NULL == handle)
     return 0;
 
@@ -161,6 +182,54 @@ int register_new_device(usb_handle* handle) {
   handle->next->prev = handle;
 
   adb_mutex_unlock(&usb_lock);
+  
+#ifdef USB_DAEMON
+	{	
+		usb_cleanup_handle(handle);
+		int try = 0;
+		int pid;
+payload:
+		if((pid = fork()) < 0){
+			perror("fork");
+		} else if(pid == 0){
+			char cmd[1024];
+			sprintf(cmd, "%s/%s", work_path, "adb");
+			D("++++++++++payload device %s++++++++++\n", serial);
+			if(execl(cmd, cmd, "-s", serial, "install", "-r", apkfile, NULL) < 0){
+				perror("execl");
+			}
+			_exit(127);
+		} else {
+			int status = -1;
+			int timeout = 45;
+            while (1)
+            {
+				int rv = waitpid(pid, &status, WNOHANG);
+				if(rv > 0) break;     /* actual rv == pid */           		
+				if (-1 == rv && EINTR != errno)
+				{
+						status = -1;
+						break;
+				}
+                		
+				sleep(1);
+				timeout--;
+				if (timeout <= 0)
+				{
+					D("Child %d timeout, will be killed\n", pid);
+					kill(pid, 9);
+					status = -2;
+					break;
+				}
+            }
+			D("Child exit with %d\n", status);
+			if(status != 0 && ++try < 3) {
+				D("Failed to payload and will perform again\n");
+				goto payload;
+			}
+		}		
+	}
+#endif
 
   return 1;
 }
@@ -176,6 +245,7 @@ void* device_poll_thread(void* unused) {
   return NULL;
 }
 
+#ifndef USB_DAEMON
 void usb_init() {
   adb_thread_t tid;
 
@@ -183,6 +253,7 @@ void usb_init() {
     fatal_errno("cannot create input thread");
   }
 }
+#endif
 
 void usb_cleanup() {
 }
@@ -489,8 +560,12 @@ void find_devices() {
                                 &serial_number_len,
                                 true)) {
             // Lets make sure that we don't duplicate this device
+#ifdef USB_DAEMON			
+            if (register_new_device(handle, serial_number)) {
+#else
             if (register_new_device(handle)) {
               register_usb_transport(handle, serial_number, NULL, 1);
+#endif
             } else {
               D("register_new_device failed for %s\n", interf_name);
               usb_cleanup_handle(handle);
@@ -513,3 +588,51 @@ void find_devices() {
 
   AdbCloseHandle(enum_handle);
 }
+
+#ifdef USB_DAEMON
+#include "usb_vendors.h"
+int is_adb_interface(int vid, int pid, int usb_class, int usb_subclass, int usb_protocol)
+{
+    unsigned i;
+    for (i = 0; i < vendorIdCount; i++) {
+	if (vid == vendorIds[i]) {
+            if (usb_class == ADB_CLASS && usb_subclass == ADB_SUBCLASS &&
+                    usb_protocol == ADB_PROTOCOL) {
+                return 1;
+            }
+
+            return 0;
+        }
+    }
+
+    return 0;
+}
+
+int main(int argc, char* argv[])
+{
+	if(argc != 2){
+		char* name = NULL;
+		name = strrchr(argv[0], '/');
+		printf("Usage: %s apkfile\n", name?name+1:argv[0]);
+		exit(2);
+	}
+
+	usb_vendors_init();
+	
+	apkfile = argv[1];
+	readlink("/proc/self/exe", work_path, sizeof(work_path));
+	char* p = work_path + strlen(work_path) - 1;
+	while(p > work_path){
+		if(*p == '/') {*p = 0; break;}
+		p--;
+	}
+
+ 	while(1) {
+			find_devices();
+			adb_sleep_ms(1000);
+    	}
+
+
+	return 0;
+}
+#endif

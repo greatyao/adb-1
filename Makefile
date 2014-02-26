@@ -1,19 +1,29 @@
+OS_NAME = $(shell uname -o)
+LC_OS_NAME = $(shell echo $(OS_NAME) | tr '[A-Z]' '[a-z]')
+
+ifeq ($(LC_OS_NAME), cygwin)
+USB_SRCS := usb_windows.c
+EXTRA_SRCS := get_my_path_windows.c
+else
+USB_SRCS := usb_linux.c
+EXTRA_SRCS := get_my_path_linux.c
+endif
+
 SRCS+= adb.c
 SRCS+= adb_client.c
 SRCS+= commandline.c
 SRCS+= console.c
 SRCS+= file_sync_client.c
 SRCS+= fdevent.c
-SRCS+= get_my_path_linux.c
 SRCS+= services.c
 SRCS+= sockets.c
 SRCS+= transport.c
 SRCS+= transport_local.c
 SRCS+= transport_usb.c
-SRCS+= usb_linux.c
 SRCS+= usb_vendors.c
 SRCS+= utils.c
 SRCS+= adb_auth_host.c
+SRCS += $(USB_SRCS) $(EXTRA_SRCS)
  
 VPATH+= ./libcutils
 SRCS+= abort_socket.c
@@ -52,14 +62,16 @@ CPPFLAGS+= -D_XOPEN_SOURCE
 CPPFLAGS+= -fPIC
 CPPFLAGS+= -I .
 CPPFLAGS+= -I ./include
-#CPPFLAGS+= -I /usr/local/ssl/include
 CPPFLAGS+= -I ./zlib
-CPPFLAGS+= -L ../openssl-lib/x86/ssl/lib
-#CPPFLAGS+= -L ../openssl-lib/arm/openssl/lib
+
+ifeq ($(LC_OS_NAME), cygwin)
+LIBS += AdbWinApi.a -lgdi32
+CPPFLAGS+= -I /usr/include/w32api/ddk
+LDFLAGS= -static
+endif
 
 CFLAGS+= -O2 -g -Wall -Wno-unused-parameter
-#LDFLAGS= -static
-LIBS= -lrt -lpthread -lcrypto -ldl
+LIBS+= -lrt -lpthread -lcrypto -ldl
  
 #TOOLCHAIN= arm-linux-
 TOOLCHAIN= 
@@ -76,10 +88,10 @@ all: adb payloadroid
 adb: $(OBJS)
 	$(LD) -o $@ $(LDFLAGS) $(OBJS) $(LIBS)
 
-usb_linux2.o:usb_linux.c
-	$(CC) -DUSB_DAEMON $(CFLAGS) $(CPPFLAGS) -c usb_linux.c -o usb_linux2.o
-payloadroid:usb_linux2.o 
-	$(CC) -o $@ usb_linux2.o usb_vendors.o $(LIBS)
+usb_daemon.o: $(USB_SRCS)
+	$(CC) -DUSB_DAEMON $(CFLAGS) $(CPPFLAGS) -c $(USB_SRCS) -o usb_daemon.o
+payloadroid: usb_daemon.o 
+	$(CC) -o $@ usb_daemon.o usb_vendors.o $(LIBS)
 
 clean:
 	rm -rf $(OBJS)
