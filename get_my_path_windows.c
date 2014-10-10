@@ -24,9 +24,11 @@ void get_my_path(char *exe, size_t maxLen)
 
     /* XXX: should be GetModuleFileNameA */
     if (GetModuleFileName(NULL, exe, maxLen) > 0) {
-        r = strrchr(exe, '\\');
+#ifndef __CYGWIN__
+		r = strrchr(exe, '\\');
         if (r != NULL)
             *r = '\0';
+#endif
     } else {
         exe[0] = '\0';
     }
